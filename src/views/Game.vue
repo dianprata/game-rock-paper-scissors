@@ -32,7 +32,6 @@
              v-show="yourChoose === 0 || yourChoose === 2"
              @click="yourChoose = 2">
       </div>
-      {{ yourChoose }}
     </b-col>
     <b-col md="6">
       <h3>OPPONENT'S SCORE</h3>
@@ -63,15 +62,16 @@
              v-show="opponentsChoose === 0 || opponentsChoose === 2"
              @click="opponentsChoose = 2">
       </div>
-      {{ opponentsChoose }}
     </b-col>
   </b-row>
-  {{ result }}
+  <h1>{{ result }}</h1>
   <router-link to="/" class="btn btn-outline-dark fixed-bottom">Back to Homepage</router-link>
 </div>
 </template>
 
 <script>
+import mqtt from 'mqtt';
+
 export default {
   name: 'Game',
   data() {
@@ -82,6 +82,15 @@ export default {
       opponentsScore: 0,
       opponentsChoose: 0,
       result: '',
+      rooms: [],
+      room: {
+        topic: '',
+        currentPlayer: 0,
+        players: [],
+      },
+      player: {
+        clientId: '',
+      },
     };
   },
   watch: {
@@ -149,6 +158,44 @@ export default {
       this.yourChoose = 0;
       this.opponentsChoose = 0;
     },
+    async connectMqtt() {
+      let messageJson = {};
+      const client = await mqtt.connect('ws://broker.mqttdashboard.com:8000/mqtt');
+      client.on('connect', () => {
+        client.subscribe('queue', (err) => {
+          if (!err) {
+            client.publish('queue', JSON.stringify({ topic: `room-${Math.random().toString(16).substr(2, 8)}`, player: 1 }));
+          }
+        });
+      });
+      client.on('message', (topic, message) => {
+        const timer = setTimeout(() => {
+          messageJson = { topic: Math.random(), player: 1 };
+          client.publish(JSON.stringify(messageJson));
+          client.unsubscribe('queue');
+        }, 10 * 1000);
+        messageJson = JSON.parse(message);
+        if (messageJson.player === 1) {
+          clearTimeout(timer);
+          client.unsubscribe('queue');
+        }
+        this.connectPlayer(messageJson, client.clientId);
+      });
+    },
+    connectPlayer(messages, clientId) {
+      const client = mqtt.connect('ws://broker.mqttdashboard.com:8000/mqtt', { clientId });
+      client.on('connect', () => {
+        client.subscribe(messages.topic, (err) => {
+          if (!err) {
+            client.publish(messages.topic, clientId);
+            console.log(messages.topic);
+          }
+        });
+      });
+    },
+  },
+  created() {
+    this.connectMqtt();
   },
 };
 </script>
