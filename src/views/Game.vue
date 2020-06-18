@@ -70,7 +70,10 @@
 </template>
 
 <script>
+/* eslint-disable */
 import mqtt from 'mqtt';
+
+const client = mqtt.connect('ws://broker.mqttdashboard.com:8000/mqtt');
 
 export default {
   name: 'Game',
@@ -91,6 +94,7 @@ export default {
       player: {
         clientId: '',
       },
+      findRoomTimeout: ''
     };
   },
   watch: {
@@ -158,28 +162,68 @@ export default {
       this.yourChoose = 0;
       this.opponentsChoose = 0;
     },
-    async connectMqtt() {
-      let messageJson = {};
-      const client = await mqtt.connect('ws://broker.mqttdashboard.com:8000/mqtt');
-      client.on('connect', () => {
-        client.subscribe('queue', (err) => {
-          if (!err) {
-            client.publish('queue', JSON.stringify({ topic: `room-${Math.random().toString(16).substr(2, 8)}`, player: 1 }));
-          }
-        });
+    subscribeQueue() {
+      return client.subscribe('queue');
+    },
+    unsubscribeQueue() {
+      return client.unsubscribe('queue');
+    },
+    subscribeRoom(roomCode) {
+      client.subscribe(roomCode);
+      client.publish(roomCode, JSON.stringify({ name: 'Ardiono' }));
+    },
+    createRoom() {
+      const c = client;
+
+      const message = { topic: `room-${Math.random().toString(16).substr(2, 8)}`, player: 1 };
+      const timer = setTimeout(() => {
+        console.log('ini muncul setelah 10 detik');
+        console.log(message);
+        c.publish('queue', JSON.stringify(message));
+        this.unsubscribeQueue();
+        this.subscribeRoom(message.topic);
+
+        return message;
+      }, 10 * 1000);
+
+      return {
+        timer,
+        message
+      };
+    },
+    findRoom(topic, message) {
+      const c = client;
+      const messageJson = JSON.parse(message);
+      if (messageJson.player === 1 && messageJson.topic !== this.findRoomTimeout.message.topic) {
+        clearTimeout(this.findRoomTimeout.timer);
+        return messageJson;
+      } else {
+        return null;
+      }
+    },
+    joinRoom(roomData) {
+      const c = client;
+      const queueMessage = roomData;
+      console.log(queueMessage);
+      queueMessage.player += 1;
+      c.publish('queue', JSON.stringify(queueMessage));
+
+      this.subscribeRoom(roomData.topic);
+      return queueMessage;
+    },
+    runtimeMqtt() {
+      const c = client;
+      c.on('connect', () => {
+        this.subscribeQueue();
+        this.findRoomTimeout = this.createRoom();
       });
-      client.on('message', (topic, message) => {
-        const timer = setTimeout(() => {
-          messageJson = { topic: Math.random(), player: 1 };
-          client.publish(JSON.stringify(messageJson));
-          client.unsubscribe('queue');
-        }, 10 * 1000);
-        messageJson = JSON.parse(message);
-        if (messageJson.player === 1) {
-          clearTimeout(timer);
-          client.unsubscribe('queue');
+
+      c.on('message', (topic, message) => {
+        const roomData = this.findRoom(topic, message);
+
+        if(roomData) {
+          this.joinRoom(roomData);
         }
-        this.connectPlayer(messageJson, client.clientId);
       });
     },
     connectPlayer(messages, clientId) {
@@ -195,7 +239,7 @@ export default {
     },
   },
   created() {
-    this.connectMqtt();
+    this.runtimeMqtt();
   },
 };
 </script>
