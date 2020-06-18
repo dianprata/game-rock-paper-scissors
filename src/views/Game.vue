@@ -131,10 +131,7 @@ export default {
     },
     yourChoose() {
       this.logicGame();
-    },
-    opponentsChoose() {
-      this.logicGame();
-    },
+    }
   },
   methods: {
     calculate() {
