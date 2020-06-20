@@ -129,14 +129,11 @@ export default {
         }
       }, 1000);
     },
-    yourChoose() {
-      this.logicGame();
-    }
   },
   methods: {
     calculate() {
-        this.round += 1;
-        this.reset();
+      this.round += 1;
+      this.reset();
     },
     logicGame() {
       // Rock 3 > Scissors 2 > Paper 1 > Rock 3.
@@ -162,10 +159,16 @@ export default {
         if (this.yourChoose === this.opponentsChoose) {
           this.result = 'TIE';
         }
+        this.calculate();
       }
     },
     reset() {
       this.yourChoose = 0;
+      this.opponentsChoose = 0;
+      this.opponentsChooseTmp = 0;
+      setTimeout(() => {
+        this.result = '';
+      }, 1000);
     },
     subscribeQueue() {
       return client.subscribe('queue');
@@ -180,7 +183,6 @@ export default {
     },
     createRoom() {
       const c = client;
-
       const message = { topic: `room-${Math.random().toString(16).substr(2, 8)}`, player: 1 };
       this.turn = message.player;
       const timer = setTimeout(() => {
@@ -189,7 +191,6 @@ export default {
         c.publish('queue', JSON.stringify(message));
         this.unsubscribeQueue();
         this.subscribeRoom(message.topic);
-
         return message;
       }, 10 * 1000);
 
@@ -215,7 +216,6 @@ export default {
       queueMessage.player += 1;
       this.turn = queueMessage.player;
       c.publish('queue', JSON.stringify(queueMessage));
-
       this.subscribeRoom(roomData.topic);
       return queueMessage;
     },
@@ -226,23 +226,33 @@ export default {
       const gameData = { turn: this.turn, choose: this.yourChoose, round: this.round };
       c.publish(this.roomCode, JSON.stringify(gameData));
 
-      if(this.opponentsChooseTmp !== 0) {
-        this.opponentsChoose = this.opponentsChooseTmp;
-      }
     },
     receiveChoice(gameData) {
       const gameDataJson = JSON.parse(gameData);
-        if(gameDataJson.turn !== this.turn && this.round !== gameDataJson.round) {
-          this.calculate();
-          console.log('your choose', gameDataJson);
-          this.opponentsChooseTmp = gameDataJson.choose;
+      if(gameDataJson.turn !== this.turn && gameDataJson) {
+        this.opponentsChooseTmp = gameDataJson.choose;
+      }
+      if(this.opponentsChooseTmp !== 0 && this.opponentsChooseTmp !== undefined) {
+        this.opponentsChoose = this.opponentsChooseTmp;
+        if(this.yourChoose !== 0 && this.opponentsChoose !== 0) {
+          this.logicGame();
         }
+        if(this.round !== gameDataJson.round) {
+          this.reset();
+        }
+      }
     },
     runtimeMqtt() {
       const c = client;
+      let loader = this.$loading.show({
+        loader: 'spinner'
+      });
       c.on('connect', () => {
         this.subscribeQueue();
         this.findRoomTimeout = this.createRoom();
+        setTimeout(() => {
+          loader.hide();
+        }, 10 * 1000);
       });
 
       // sedang dalam antrian
@@ -252,20 +262,12 @@ export default {
 
           if(roomData) {
             this.joinRoom(roomData);
+            setTimeout(() => {
+              loader.hide();
+            }, 10 * 1000);
           }
         });
       }
-    },
-    connectPlayer(messages, clientId) {
-      const client = mqtt.connect('ws://broker.mqttdashboard.com:8000/mqtt', { clientId });
-      client.on('connect', () => {
-        client.subscribe(messages.topic, (err) => {
-          if (!err) {
-            client.publish(messages.topic, clientId);
-            console.log(messages.topic);
-          }
-        });
-      });
     },
   },
   created() {
@@ -273,15 +275,11 @@ export default {
     this.runtimeMqtt();
     setInterval(() => {
       if(this.stateGame === "PLAYGAME") {
-        c.on('message', (topic, message, packet) => {
+        c.on('message', (topic, message) => {
           this.receiveChoice(message);
         });
-
-        if(this.opponentsChooseTmp !== 0) {
-           this.opponentsChoose = this.opponentsChooseTmp;
-        }
       }
-    }, 500);
+    }, 1000);
   },
 };
 </script>
