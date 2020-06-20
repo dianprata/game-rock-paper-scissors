@@ -18,19 +18,19 @@
              width="80px"
              class="cursor-pointer"
              v-show="yourChoose === 0 || yourChoose === 3"
-             @click="yourChoose = 3">
+             @click="sendChoice(3)">
         <img src="@/assets/paper.svg"
              alt="paper"
              width="80px"
              class="mx-5 cursor-pointer"
              v-show="yourChoose === 0 || yourChoose === 1"
-             @click="yourChoose = 1">
+             @click="sendChoice(1)">
         <img src="@/assets/scissors.svg"
              alt="scissors"
              width="80px"
              class="cursor-pointer"
              v-show="yourChoose === 0 || yourChoose === 2"
-             @click="yourChoose = 2">
+             @click="sendChoice(2)">
       </div>
     </b-col>
     <b-col md="6">
@@ -42,7 +42,7 @@
                      readonly
                      class="mt-n3"
       ></b-form-rating>
-      <div class="mt-3">
+      <div class="mt-3" v-show="receivedGameData">
         <img src="@/assets/rock.svg"
              alt="rock"
              width="80px"
@@ -70,17 +70,22 @@
 </template>
 
 <script>
+/* eslint-disable */
 import mqtt from 'mqtt';
+
+const client = mqtt.connect('ws://broker.mqttdashboard.com:8000/mqtt');
 
 export default {
   name: 'Game',
   data() {
     return {
       round: 1,
+      roundTmp: 1,
       yourScore: 0,
       yourChoose: 0,
       opponentsScore: 0,
       opponentsChoose: 0,
+      opponentsChooseTmp: 0,
       result: '',
       rooms: [],
       room: {
@@ -91,6 +96,12 @@ export default {
       player: {
         clientId: '',
       },
+      findRoomTimeout: '',
+      roomCode: '',
+      stateGame: 'FIND_ROOM',
+      turn: 0,
+      turnCount: 0,
+      receivedGameData: false
     };
   },
   watch: {
@@ -118,14 +129,12 @@ export default {
         }
       }, 1000);
     },
-    yourChoose() {
-      this.logicGame();
-    },
-    opponentsChoose() {
-      this.logicGame();
-    },
   },
   methods: {
+    calculate() {
+      this.round += 1;
+      this.reset();
+    },
     logicGame() {
       // Rock 3 > Scissors 2 > Paper 1 > Rock 3.
       if (this.yourChoose !== 0 && this.opponentsChoose !== 0) {
@@ -150,52 +159,127 @@ export default {
         if (this.yourChoose === this.opponentsChoose) {
           this.result = 'TIE';
         }
-        this.round += 1;
-        this.reset();
+        this.calculate();
       }
     },
     reset() {
       this.yourChoose = 0;
       this.opponentsChoose = 0;
+      this.opponentsChooseTmp = 0;
+      setTimeout(() => {
+        this.result = '';
+      }, 1000);
     },
-    async connectMqtt() {
-      let messageJson = {};
-      const client = await mqtt.connect('ws://broker.mqttdashboard.com:8000/mqtt');
-      client.on('connect', () => {
-        client.subscribe('queue', (err) => {
-          if (!err) {
-            client.publish('queue', JSON.stringify({ topic: `room-${Math.random().toString(16).substr(2, 8)}`, player: 1 }));
-          }
-        });
-      });
-      client.on('message', (topic, message) => {
-        const timer = setTimeout(() => {
-          messageJson = { topic: Math.random(), player: 1 };
-          client.publish(JSON.stringify(messageJson));
-          client.unsubscribe('queue');
-        }, 10 * 1000);
-        messageJson = JSON.parse(message);
-        if (messageJson.player === 1) {
-          clearTimeout(timer);
-          client.unsubscribe('queue');
+    subscribeQueue() {
+      return client.subscribe('queue');
+    },
+    unsubscribeQueue() {
+      return client.unsubscribe('queue');
+    },
+    subscribeRoom(roomCode) {
+      client.subscribe(roomCode);
+      this.roomCode = roomCode;
+      this.stateGame = 'PLAYGAME';
+    },
+    createRoom() {
+      const c = client;
+      const message = { topic: `room-${Math.random().toString(16).substr(2, 8)}`, player: 1 };
+      this.turn = message.player;
+      const timer = setTimeout(() => {
+        console.log('ini muncul setelah 10 detik');
+        console.log(message);
+        c.publish('queue', JSON.stringify(message));
+        this.unsubscribeQueue();
+        this.subscribeRoom(message.topic);
+        return message;
+      }, 10 * 1000);
+
+      return {
+        timer,
+        message
+      };
+    },
+    findRoom(topic, message) {
+      const c = client;
+      const messageJson = JSON.parse(message);
+      if (messageJson.player === 1 && messageJson.topic !== this.findRoomTimeout.message.topic) {
+        clearTimeout(this.findRoomTimeout.timer);
+        return messageJson;
+      } else {
+        return null;
+      }
+    },
+    joinRoom(roomData) {
+      const c = client;
+      const queueMessage = roomData;
+      console.log(queueMessage);
+      queueMessage.player += 1;
+      this.turn = queueMessage.player;
+      c.publish('queue', JSON.stringify(queueMessage));
+      this.subscribeRoom(roomData.topic);
+      return queueMessage;
+    },
+    sendChoice(choice) {
+      const c = client;
+      this.yourChoose = choice;
+
+      const gameData = { turn: this.turn, choose: this.yourChoose, round: this.round };
+      c.publish(this.roomCode, JSON.stringify(gameData));
+
+    },
+    receiveChoice(gameData) {
+      const gameDataJson = JSON.parse(gameData);
+      if(gameDataJson.turn !== this.turn && gameDataJson) {
+        this.opponentsChooseTmp = gameDataJson.choose;
+      }
+      if(this.opponentsChooseTmp !== 0 && this.opponentsChooseTmp !== undefined) {
+        this.opponentsChoose = this.opponentsChooseTmp;
+        if(this.yourChoose !== 0 && this.opponentsChoose !== 0) {
+          this.logicGame();
         }
-        this.connectPlayer(messageJson, client.clientId);
-      });
+        if(this.round !== gameDataJson.round) {
+          this.reset();
+        }
+      }
     },
-    connectPlayer(messages, clientId) {
-      const client = mqtt.connect('ws://broker.mqttdashboard.com:8000/mqtt', { clientId });
-      client.on('connect', () => {
-        client.subscribe(messages.topic, (err) => {
-          if (!err) {
-            client.publish(messages.topic, clientId);
-            console.log(messages.topic);
+    runtimeMqtt() {
+      const c = client;
+      let loader = this.$loading.show({
+        loader: 'spinner'
+      });
+      c.on('connect', () => {
+        this.subscribeQueue();
+        this.findRoomTimeout = this.createRoom();
+        setTimeout(() => {
+          loader.hide();
+        }, 10 * 1000);
+      });
+
+      // sedang dalam antrian
+      if(this.stateGame === 'FIND_ROOM') {
+        c.on('message', (topic, message) => {
+          const roomData = this.findRoom(topic, message);
+
+          if(roomData) {
+            this.joinRoom(roomData);
+            setTimeout(() => {
+              loader.hide();
+            }, 10 * 1000);
           }
         });
-      });
+      }
     },
   },
   created() {
-    this.connectMqtt();
+    const c = client;
+    this.runtimeMqtt();
+    setInterval(() => {
+      if(this.stateGame === "PLAYGAME") {
+        c.on('message', (topic, message) => {
+          this.receiveChoice(message);
+        });
+      }
+    }, 1000);
   },
 };
 </script>
